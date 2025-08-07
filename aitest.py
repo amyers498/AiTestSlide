@@ -3,30 +3,24 @@ import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from ast import literal_eval
-import torch  # For potential tensor ops, but we'll stick to NumPy for speed
+import torch
+import altair as alt
 
-# Load model from local directory
 model = SentenceTransformer('./minilm_model')
-
-# Load user data (make sure the CSV is in the same directory)
 df = pd.read_csv("slidesocial_dummy_users.csv")
-
-# Process traits and pref_gender into lists
 df["Traits"] = df["Traits"].apply(lambda x: [t.strip() for t in x.split(",")])
 df["Pref_Gender"] = df["Pref_Gender"].apply(lambda x: [g.strip() for g in x.split(",")])
 
-# Precompute embeddings and normalize them for fast dot-product cosine sim
 @st.cache_data(show_spinner=False)
 def generate_embeddings():
     texts = df["Activity"] + "; " + df["Traits"].apply(lambda t: ", ".join(t))
     emb = model.encode(texts)
     norms = np.linalg.norm(emb, axis=1, keepdims=True)
-    norms[norms == 0] = 1  # Avoid div-by-zero (rare)
+    norms[norms == 0] = 1
     return emb / norms
 
 embeddings = generate_embeddings()
 
-# UI
 st.set_page_config(page_title="SlideSocial Matcher", layout="wide")
 st.title("SlideSocial Matcher 🔮")
 
@@ -59,7 +53,6 @@ if page == "Match Me (Page 1)":
             if user_norm != 0:
                 user_vec /= user_norm
 
-            # Filter candidates
             candidates = df[
                 df["Gender"].isin(pref_gender) &
                 (df["Age"] >= pref_age[0]) & (df["Age"] <= pref_age[1]) &
@@ -71,7 +64,7 @@ if page == "Match Me (Page 1)":
             else:
                 candidate_indices = candidates.index.values
                 candidate_emb = embeddings[candidate_indices]
-                scores = np.dot(user_vec, candidate_emb.T)  # Fast cos sim
+                scores = np.dot(user_vec, candidate_emb.T)
                 candidates = candidates.copy()
                 candidates["Score"] = scores
                 top_matches = candidates.sort_values("Score", ascending=False).head(3)
@@ -116,10 +109,9 @@ elif page == "Batch Match Test (Page 2)":
 
                 filtered_local_indices = np.where(mask)[0]
                 filtered_emb = group_emb[filtered_local_indices]
-                scores = np.dot(user_vec, filtered_emb.T)  # Fast cos sim
+                scores = np.dot(user_vec, filtered_emb.T)
 
-                # Get top 3 via argsort (faster than sorting dataframe)
-                top3_idx = np.argsort(scores)[-3:][::-1]  # Descending
+                top3_idx = np.argsort(scores)[-3:][::-1]
                 for idx in top3_idx:
                     match_idx = filtered_indices[idx]
                     match_row = df.loc[match_idx]
@@ -127,7 +119,9 @@ elif page == "Batch Match Test (Page 2)":
                         "User": row["Name"],
                         "Matched With": match_row["Name"],
                         "Match Score": float(scores[idx]),
-                        "Location": loc
+                        "Location": loc,
+                        "Traits": ", ".join(match_row["Traits"]),
+                        "Activity": match_row["Activity"]
                     })
 
                 processed += 1
@@ -136,5 +130,25 @@ elif page == "Batch Match Test (Page 2)":
         return pd.DataFrame(results)
 
     result_df = compute_top_3_all()
+
     st.dataframe(result_df)
+    selected_user = st.selectbox("Select a user to inspect matches:", sorted(result_df["User"].unique()))
+    user_matches = result_df[result_df["User"] == selected_user].sort_values("Match Score", ascending=False)
+
+    st.subheader(f"🔍 Detailed matches for {selected_user}")
+    for _, row in user_matches.iterrows():
+        st.markdown(f"**Matched With:** {row['Matched With']}  ")
+        st.markdown(f"**Location:** {row['Location']}  ")
+        st.markdown(f"**Activity:** {row['Activity']}  ")
+        st.markdown(f"**Traits:** {row['Traits']}")
+        st.markdown(f"**Match Score:** {row['Match Score']*100:.2f}%")
+        st.markdown("---")
+
+    chart = alt.Chart(user_matches).mark_bar().encode(
+        x=alt.X('Match Score:Q', scale=alt.Scale(domain=[0, 1])),
+        y=alt.Y('Matched With:N', sort='-x'),
+        tooltip=['Matched With', 'Match Score']
+    ).properties(height=300, title=f"Top Matches for {selected_user}")
+    st.altair_chart(chart, use_container_width=True)
+
     st.download_button("Download Match Results CSV", result_df.to_csv(index=False), "top_3_matches.csv")
