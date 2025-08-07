@@ -8,7 +8,8 @@ from sklearn.preprocessing import MultiLabelBinarizer
 from ast import literal_eval
 
 # Load model
-model = SentenceTransformer('all-MiniLM-L6-v2')
+model = SentenceTransformer('./minilm_model')
+
 
 # Load user data (make sure the CSV is in the same directory)
 df = pd.read_csv("slidesocial_dummy_users.csv")
